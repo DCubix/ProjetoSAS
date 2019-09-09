@@ -67,12 +67,4 @@ struct TCP_HDR {
 	unsigned short urgent_pointer; // urgent pointer
 };
 
-struct ICMP_HDR {
-	BYTE type; // ICMP Error type
-	BYTE code; // Type sub code
-	USHORT checksum;
-	USHORT id;
-	USHORT seq;
-};
-
 #endif // HEADERS_HPP

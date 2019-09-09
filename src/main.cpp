@@ -5,37 +5,15 @@
 #include <future>
 #include <fstream>
 
-#ifdef _WIN32
-#include <stdio.h>
-#include <winsock2.h>
-#define SIO_RCVALL _WSAIOW(IOC_VENDOR, 1)
-#else
-#error "Not supported"
-#endif
-
 #include "app.hpp"
-#include "headers.hpp"
-#include "../osdialog/OsDialog.hpp"
+#include "sniffer.hpp"
+#include "OsDialog.hpp"
 #include "../imgui/imgui_memory_editor.h"
 
-struct Packet {
-	std::string from, to, type, desc;
-	std::vector<char> data;
-};
-
-using AddrIn = struct sockaddr_in;
-
-static SOCKET g_Sniffer;
-static AddrIn g_Source;
-static AddrIn g_Dest;
-
-static std::vector<std::string> g_Addresses;
+static Sniffer m_sniffer{};
 static std::vector<Packet> g_Pacotes;
 static std::vector<char> g_SelectedData;
-static bool g_Sniffing = false;
 static bool g_ScrollToBottom = false;
-static HOSTENT* g_Local = nullptr;
-static std::mutex g_Lock;
 
 static MemoryEditor g_MemEdit{};
 
@@ -120,154 +98,6 @@ namespace ImGui {
 
 }
 
-// Baseado em https://gist.github.com/Accalmie/d328287c05f0a417892f
-void listInterfaces() {
-	if (g_Local != nullptr) return;
-
-	char hostname[128];
-
-	if (gethostname(hostname, sizeof(hostname)) == SOCKET_ERROR) {
-		std::cout << "Erro: " << WSAGetLastError() << std::endl;
-		return;
-	}
-
-	std::cout << "Host: " << hostname << std::endl;
-
-	g_Local = gethostbyname(hostname);
-	std::cout << "Interfaces: " << std::endl;
-	if (g_Local == nullptr) {
-		std::cout << "Erro: " << WSAGetLastError() << std::endl;
-		return;
-	}
-
-	g_Addresses.clear();
-
-	struct in_addr addr;
-	for (int i = 0; g_Local->h_addr_list[i] != 0; ++i) {
-		memcpy(&addr, g_Local->h_addr_list[i], sizeof(struct in_addr));
-		std::cout << "\tN: " << i << " - End.: " << inet_ntoa(addr) << std::endl;
-		g_Addresses.push_back(std::string(inet_ntoa(addr)));
-	}
-}
-
-void initializeSocket(int in) {
-	g_Sniffing = true;
-	g_Sniffer = socket(AF_INET, SOCK_RAW, IPPROTO_IP);
-	if (g_Sniffer == INVALID_SOCKET) {
-		std::cout << "Socket inválido." << std::endl;
-		std::cout << "Erro: " << WSAGetLastError() << std::endl;
-		return;
-	}
-
-	listInterfaces();
-
-	if (g_Local == nullptr) {
-		closesocket(g_Sniffer);
-		return;
-	}
-
-	memset(&g_Dest, 0, sizeof(AddrIn));
-	memcpy(&g_Dest.sin_addr.s_addr, g_Local->h_addr_list[in], sizeof(g_Dest.sin_addr.s_addr));
-	g_Dest.sin_family = AF_INET;
-	g_Dest.sin_port = 0;
-
-	if (::bind(g_Sniffer, (struct sockaddr*)&g_Dest, sizeof(g_Dest)) == SOCKET_ERROR) {
-		std::cout << "Falha no bind: " << g_Local->h_addr_list[in] << ": " << WSAGetLastError() << std::endl;
-		return;
-	}
-
-	int j = 1;
-	if (WSAIoctl(g_Sniffer, SIO_RCVALL, &j, sizeof(j), 0, 0, (LPDWORD) &in , 0 , 0) == SOCKET_ERROR) {
-		std::cout << "Erro: " << WSAGetLastError() << std::endl;
-		return;
-	}
-
-	std::vector<char> data;
-	data.resize(0xFFFF);
-
-	while (g_Sniffing) {
-		int count = recvfrom(g_Sniffer, data.data(), data.size(), 0, nullptr, nullptr);
-		if (count > 0) {
-			auto buff = data.data();
-			auto iphdr = (IPV4_HDR*) buff;
-			auto iphdrlen = iphdr->ip_header_len * 4;
-
-			AddrIn src, dest;
-			memset(&src, 0, sizeof(src));
-			src.sin_addr.s_addr = iphdr->ip_srcaddr;
-
-			memset(&dest, 0, sizeof(dest));
-			dest.sin_addr.s_addr = iphdr->ip_destaddr;
-
-			Packet pak{};
-			pak.from = std::string(inet_ntoa(src.sin_addr));
-			pak.to = std::string(inet_ntoa(dest.sin_addr));
-
-			switch (iphdr->ip_protocol) {
-				case 6: { // Protocolo TCP
-					auto tcp = (TCP_HDR*)(buff + iphdrlen);
-					pak.type = "TCP";
-					auto dataPtr = buff + iphdrlen + tcp->data_offset * 4;
-					int dataSize = (count - tcp->data_offset * 4 - iphdrlen);
-					pak.data = std::vector<char>(dataPtr, dataPtr + dataSize);
-					pak.from += ":" + std::to_string(tcp->source_port);
-					pak.to += ":" + std::to_string(tcp->dest_port);
-
-					std::string dat(pak.data.begin(), pak.data.end());
-					if (tcp->source_port == 80 ||
-						tcp->source_port == 8080 ||
-						tcp->source_port == 8008 ||
-						tcp->source_port == 591 ||
-						dat.find("HTTP/1.1") != dat.npos)
-					{
-						pak.type = "TCP:http";
-					}
-				} break;
-				case 17: { // Protocolo UDP
-					auto udp = (UDP_HDR*)(buff + iphdrlen);
-					pak.type = "UDP";
-					auto dataPtr = buff + iphdrlen + sizeof(UDP_HDR);
-					int dataSize = (count - sizeof(UDP_HDR) - iphdrlen);
-					pak.data = std::vector<char>(dataPtr, dataPtr + dataSize);
-					pak.from += ":" + std::to_string(udp->source_port);
-					pak.to += ":" + std::to_string(udp->dest_port);
-
-					std::string dat(pak.data.begin(), pak.data.end());
-					if (udp->source_port == 8080 ||
-						udp->source_port == 8008 ||
-						udp->source_port == 591 ||
-						dat.find("HTTP/1.1") != dat.npos)
-					{
-						pak.type = "UDP:http";
-					}
-				} break;
-				case 1: { // Protocolo ICMP
-					auto icmp = (ICMP_HDR*)(buff + iphdrlen);
-					pak.type = "ICMP";
-					pak.desc = "T: " + std::to_string(icmp->type) + " C: " + std::to_string(icmp->code);
-					auto dataPtr = buff + iphdrlen + sizeof(ICMP_HDR);
-					int dataSize = (count - sizeof(ICMP_HDR) - iphdrlen);
-					pak.data = std::vector<char>(dataPtr, dataPtr + dataSize);
-				} break;
-
-				default: break;
-			}
-
-			if (!pak.type.empty()) {
-				if (g_Pacotes.size() > 256) {
-					g_Pacotes.erase(g_Pacotes.begin());
-				}
-				g_Pacotes.push_back(pak);
-				g_ScrollToBottom = true;
-			}
-
-			//Sleep(500);
-		}
-	}
-
-	closesocket(g_Sniffer);
-}
-
 static ImGui::ColumnHeader headers[] = {
 	{ "Origem", 170 },
 	{ "Destino", 170 },
@@ -282,23 +112,26 @@ static bool VectorOfStringGetter(void* data, int n, const char** out_text) {
 }
 
 void gui() {
-	g_Lock.lock();
-
 	static bool data_view_open = false;
 	static int selected_in = 0;
 
 	if (ImGui::Begin("Pacotes")) {
-		ImGui::Combo("Interfaces", &selected_in, VectorOfStringGetter, &g_Addresses, g_Addresses.size());
+		ImGui::Combo(
+			"Interfaces",
+			&selected_in,
+			VectorOfStringGetter,
+			&m_sniffer.interfaceNames(),
+			m_sniffer.interfaceNames().size()
+		);
 		ImGui::SameLine();
-		if (!g_Sniffing) {
+		if (m_sniffer.stopped()) {
 			if (ImGui::Button("Iniciar")) {
 				g_Pacotes.clear();
-				g_Sniffing = false;
-				std::thread(initializeSocket, selected_in).detach();
+				m_sniffer.start(selected_in);
 			}
 		} else {
 			if (ImGui::Button("Parar")) {
-				g_Sniffing = false;
+				m_sniffer.stop();
 			}
 		}
 
@@ -312,17 +145,13 @@ void gui() {
 			ImGui::NextColumn();
 			ImGui::Text(p.type.c_str());
 			ImGui::NextColumn();
-			// ImGui::Text(p.desc.c_str());
-			// ImGui::NextColumn();
-			if (p.data.empty()) {
-				ImGui::Text("<VAZIO>");
-			} else {
-				const char* id = (std::string("Ver##") + std::to_string(i)).c_str();
-				if (ImGui::Button(id)) {
-					data_view_open = true;
-					g_SelectedData = p.data;
-				}
+			const char* id = (std::string("Ver##") + std::to_string(i)).c_str();
+			if (ImGui::Button(id)) {
+				data_view_open = true;
+				g_SelectedData = p.data;
 			}
+			ImGui::SameLine();
+			ImGui::Text("(%d byte%s)", p.data.size(), p.data.size() == 0 || p.data.size() > 1 ? "s" : "");
 			ImGui::NextColumn();
 			i++;
 		}
@@ -350,21 +179,14 @@ void gui() {
 		g_MemEdit.DrawContents(g_SelectedData.data(), g_SelectedData.size());
 		ImGui::End();
 	}
-
-	g_Lock.unlock();
 }
 
 int main(int argc, char** argv) {
-	WSADATA wsa;
-	if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
-		std::cout << "WSAStartup() falhou." << std::endl;
-		return 1;
-	}
-
-	listInterfaces();
+	m_sniffer.onPacketArrival([&](Packet pak) {
+		g_Pacotes.push_back(pak);
+		g_ScrollToBottom = true;
+	});
 
 	Application(640, 480, "Sniffer").run(gui);
-
-	g_Sniffing = false;
 	return 0;
 }
