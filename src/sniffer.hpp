@@ -15,6 +15,7 @@
 #include <iphlpapi.h>
 #include <windows.h>
 #define errcode WSAGetLastError()
+#define INVALID_SOCK (SOCKET)(~0)
 #else
 #include <sys/socket.h>
 #include <arpa/inet.h>
@@ -24,6 +25,7 @@
 
 typedef int SOCKET;
 #define errcode errno
+#define INVALID_SOCK -1
 #endif
 
 #include "headers.hpp"
@@ -57,7 +59,7 @@ public:
 #else
 		m_socket = ::socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
 #endif
-		if (m_socket == -1) {
+		if (m_socket == INVALID_SOCK) {
 			std::cout << __LINE__ <<  " - Socket inválido: " << errcode << std::endl;
 			return;
 		}
@@ -82,13 +84,13 @@ public:
 	}
 
 	inline void start(int in) {
-		if (m_socket == -1) {
+		if (m_socket == INVALID_SOCK) {
 #ifdef _WIN32
 		m_socket = ::socket(AF_INET, SOCK_RAW, IPPROTO_IP);
 #else
 		m_socket = ::socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
 #endif
-			if (m_socket == -1) {
+			if (m_socket == INVALID_SOCK) {
 				std::cout << __LINE__ <<  " - Socket inválido: " << errcode << std::endl;
 				return;
 			}
@@ -131,7 +133,7 @@ public:
 	inline void onPacketArrival(const std::function<void(Packet)>& cb) { m_packetArrivalCallback = cb; }
 
 private:
-	SOCKET m_socket{ -1 };
+	SOCKET m_socket{ INVALID_SOCK };
 	HostEnt* m_host;
 	SocketAddressIn m_dest, m_src;
 
@@ -148,7 +150,7 @@ private:
 		std::vector<char> data;
 		data.resize(0xFFFF);
 
-		while (m_sniffing) {
+		do {
 			int count = recvfrom(m_socket, data.data(), data.size(), 0, nullptr, nullptr);
 			if (count > 0) {
 				auto buff = data.data();
@@ -211,9 +213,9 @@ private:
 					m_packetArrivalCallback(pak);
 				}
 			}
-		}
+		} while (m_sniffing);
 		m_stopped = true;
-		
+
 		int status = 0;
 #ifdef _WIN32
 		status = shutdown(m_socket, SD_BOTH);

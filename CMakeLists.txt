@@ -5,7 +5,6 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_definitions(-DSDL_MAIN_HANDLED)
-add_definitions(-DTINS_STATIC)
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/osdialog)
 

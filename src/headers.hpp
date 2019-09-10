@@ -1,11 +1,8 @@
 #ifndef HEADERS_HPP
 #define HEADERS_HPP
 
-// Headers: https://gist.github.com/Accalmie/d328287c05f0a417892f
-
-#ifdef _WIN32
-#include <windows.h>
-#endif
+// IPV4 + UDP + TCP Headers: https://gist.github.com/Accalmie/d328287c05f0a417892f
+#include <stdint.h>
 
 struct IPV4_HDR {
 	unsigned char ip_header_len:4; // 4-bit header length (in 32-bit words) normally=5 (Means 20 Bytes may be 24 also)
