@@ -116,6 +116,7 @@ void gui() {
 	static int selected_in = 0;
 
 	if (ImGui::Begin("Pacotes")) {
+#ifdef _WIN32
 		ImGui::Combo(
 			"Interfaces",
 			&selected_in,
@@ -124,6 +125,7 @@ void gui() {
 			m_sniffer.interfaceNames().size()
 		);
 		ImGui::SameLine();
+#endif
 		if (m_sniffer.stopped()) {
 			if (ImGui::Button("Iniciar")) {
 				g_Pacotes.clear();
@@ -188,5 +190,8 @@ int main(int argc, char** argv) {
 	});
 
 	Application(640, 480, "Sniffer").run(gui);
+#ifdef _WIN32
+	WSACleanup();
+#endif
 	return 0;
 }

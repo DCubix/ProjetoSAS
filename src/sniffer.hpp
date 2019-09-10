@@ -14,8 +14,16 @@
 #include <winsock2.h>
 #include <iphlpapi.h>
 #include <windows.h>
+#define errcode WSAGetLastError()
 #else
-#error "Not supported"
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <unistd.h>
+#include <netinet/if_ether.h>
+
+typedef int SOCKET;
+#define errcode errno
 #endif
 
 #include "headers.hpp"
@@ -34,28 +42,34 @@ public:
 	inline virtual ~Sniffer() = default;
 
 	inline Sniffer() {
+#ifdef _WIN32
 		WSADATA wsa;
 		if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
 			std::cerr << __LINE__ <<  " - WSAStartup() falhou: " << WSAGetLastError() << std::endl;
 			return;
 		}
+#endif
 		m_interfaces.clear();
 		m_interfaceNames.clear();
 
+#ifdef _WIN32
 		m_socket = ::socket(AF_INET, SOCK_RAW, IPPROTO_IP);
-		if (m_socket == INVALID_SOCKET) {
-			std::cout << __LINE__ <<  " - Socket inválido: " << WSAGetLastError() << std::endl;
+#else
+		m_socket = ::socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+#endif
+		if (m_socket == -1) {
+			std::cout << __LINE__ <<  " - Socket inválido: " << errcode << std::endl;
 			return;
 		}
 
 		char hostName[1024];
-		if ((gethostname(hostName, 1024)) == SOCKET_ERROR) {
-			std::cout << __LINE__ <<  " - Erro: " << WSAGetLastError() << std::endl;
+		if ((gethostname(hostName, 1024)) == -1) {
+			std::cout << __LINE__ <<  " - Erro: " << errcode << std::endl;
 			return;
 		}
 
 		if ((m_host = gethostbyname(hostName)) == NULL) {
-			std::cout << __LINE__ <<  " - Erro: " << WSAGetLastError() << std::endl;
+			std::cout << __LINE__ <<  " - Erro: " << errcode << std::endl;
 			return;
 		}
 
@@ -68,50 +82,41 @@ public:
 	}
 
 	inline void start(int in) {
-		// char hostName[1024];
-		// if (gethostname(hostName, 1024) == SOCKET_ERROR) {
-		// 	std::cout << "Erro ao recuperar o nome do Host: " << WSAGetLastError() << std::endl;
-		// 	return;
-		// }
-
-		// if ((m_host = gethostbyname(hostName)) == nullptr) {
-		// 	std::cout << "Erro ao recuperar o host pelo nome \"" << hostName << "\": " << WSAGetLastError() << std::endl;
-		// 	return;
-		// }
-
-		// memset(&m_dest, 0, sizeof(SocketAddressIn));
-		// m_dest.sin_family = AF_INET;
-		// m_dest.sin_port = 0;
-		// memcpy(&m_dest.sin_addr.s_addr, m_host->h_addr_list[0], sizeof(m_dest.sin_addr.s_addr));
-		if (m_socket == INVALID_SOCKET) {
-			m_socket = ::socket(AF_INET, SOCK_RAW, IPPROTO_IP);
-			if (m_socket == INVALID_SOCKET) {
-				std::cout << __LINE__ <<  " - Socket inválido: " << WSAGetLastError() << std::endl;
+		if (m_socket == -1) {
+#ifdef _WIN32
+		m_socket = ::socket(AF_INET, SOCK_RAW, IPPROTO_IP);
+#else
+		m_socket = ::socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+#endif
+			if (m_socket == -1) {
+				std::cout << __LINE__ <<  " - Socket inválido: " << errcode << std::endl;
 				return;
 			}
 		}
 
+#ifdef _WIN32
 		memset(&m_dest, 0, sizeof(SocketAddressIn));
 		memcpy(&m_dest.sin_addr.s_addr, m_host->h_addr_list[in], sizeof(m_dest.sin_addr.s_addr));
 		m_dest.sin_family = AF_INET;
 		m_dest.sin_port = 0;
 
-		if (::bind(m_socket, (SocketAddress*)&m_dest, sizeof(m_dest)) == SOCKET_ERROR) {
-			std::cout << __LINE__ <<  " - Erro: " << WSAGetLastError() << std::endl;
+		if (::bind(m_socket, (SocketAddress*)&m_dest, sizeof(m_dest)) != 0) {
+			std::cout << __LINE__ <<  " - Erro: " << errcode << std::endl;
 			return;
 		}
 
 		// Modo promíscuo
 		int j = 1;
 		if (WSAIoctl(m_socket, SIO_RCVALL, &j, sizeof(j), 0, 0, (LPDWORD) &in, 0, 0) == SOCKET_ERROR) {
-			std::cout << __LINE__ <<  " - Erro: " << WSAGetLastError() << std::endl;
+			std::cout << __LINE__ <<  " - Erro: " << errcode << std::endl;
 			return;
 		}
+#endif
 
 		m_sniffing = true;
 		m_stopped = false;
 
-		std::thread(Sniffer::sniffLoop, this).detach();
+		std::thread(&Sniffer::sniffLoop, this).detach();
 	}
 
 	inline void stop() {
@@ -126,7 +131,7 @@ public:
 	inline void onPacketArrival(const std::function<void(Packet)>& cb) { m_packetArrivalCallback = cb; }
 
 private:
-	SOCKET m_socket{ INVALID_SOCKET };
+	SOCKET m_socket{ -1 };
 	HostEnt* m_host;
 	SocketAddressIn m_dest, m_src;
 
@@ -208,8 +213,16 @@ private:
 			}
 		}
 		m_stopped = true;
-		closesocket(m_socket);
-		m_socket = INVALID_SOCKET;
+		
+		int status = 0;
+#ifdef _WIN32
+		status = shutdown(m_socket, SD_BOTH);
+		if (status == 0) { status = closesocket(m_socket); }
+#else
+		status = shutdown(m_socket, SHUT_RDWR);
+		if (status == 0) { status = close(m_socket); }
+#endif
+		m_socket = -1;
 	}
 
 };
