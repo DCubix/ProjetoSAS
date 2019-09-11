@@ -130,7 +130,6 @@ void gui() {
 	}
 
 	if (ImGui::Begin("Pacotes")) {
-#ifdef _WIN32
 		ImGui::Combo(
 			"Interfaces",
 			&selected_in,
@@ -139,7 +138,6 @@ void gui() {
 			m_sniffer.interfaceNames().size()
 		);
 		ImGui::SameLine();
-#endif
 		if (m_sniffer.stopped()) {
 			if (ImGui::Button("Iniciar")) {
 				g_Pacotes.clear();

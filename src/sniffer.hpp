@@ -17,11 +17,23 @@
 #define errcode WSAGetLastError()
 #define INVALID_SOCK (SOCKET)(~0)
 #else
-#include <sys/socket.h>
 #include <arpa/inet.h>
+#include <linux/if_packet.h>
+#include <linux/ip.h>
+#include <linux/udp.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <net/if.h>
+#include <netinet/ether.h>
+#include <netinet/if_ether.h>
+#include <string.h>
 #include <netdb.h>
 #include <unistd.h>
-#include <netinet/if_ether.h>
+#include <sys/types.h>
+#include <ifaddrs.h>
 
 typedef int SOCKET;
 #define errcode errno
@@ -54,16 +66,9 @@ public:
 		m_interfaces.clear();
 		m_interfaceNames.clear();
 
-#ifdef _WIN32
-		m_socket = ::socket(AF_INET, SOCK_RAW, IPPROTO_IP);
-#else
-		m_socket = ::socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
-#endif
-		if (m_socket == INVALID_SOCK) {
-			std::cout << __LINE__ <<  " - Socket inválido: " << errcode << std::endl;
-			return;
-		}
+		createSocket();
 
+#ifdef _WIN32
 		char hostName[1024];
 		if ((gethostname(hostName, 1024)) == -1) {
 			std::cout << __LINE__ <<  " - Erro: " << errcode << std::endl;
@@ -81,19 +86,28 @@ public:
 			std::cout << "\tN: " << i << " - End.: " << inet_ntoa(addr) << std::endl;
 			m_interfaceNames.push_back(std::string(inet_ntoa(addr)));
 		}
+#else
+		struct ifaddrs *addrs, *tmp;
+		getifaddrs(&addrs);
+		tmp = addrs;
+
+		int i = 0;
+		while (tmp) {
+			if (tmp->ifa_addr && tmp->ifa_addr->sa_family == AF_PACKET) {
+				std::cout << "\tN: " << i << " - Nome.: " << tmp->ifa_name << std::endl;
+				m_interfaceNames.push_back(std::string(tmp->ifa_name));
+			}
+			tmp = tmp->ifa_next;
+			i++;
+		}
+
+		freeifaddrs(addrs);
+#endif
 	}
 
 	inline void start(int in) {
 		if (m_socket == INVALID_SOCK) {
-#ifdef _WIN32
-		m_socket = ::socket(AF_INET, SOCK_RAW, IPPROTO_IP);
-#else
-		m_socket = ::socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
-#endif
-			if (m_socket == INVALID_SOCK) {
-				std::cout << __LINE__ <<  " - Socket inválido: " << errcode << std::endl;
-				return;
-			}
+			createSocket();
 		}
 
 #ifdef _WIN32
@@ -111,6 +125,21 @@ public:
 		int j = 1;
 		if (WSAIoctl(m_socket, SIO_RCVALL, &j, sizeof(j), 0, 0, (LPDWORD) &in, 0, 0) == SOCKET_ERROR) {
 			std::cout << __LINE__ <<  " - Erro: " << errcode << std::endl;
+			return;
+		}
+#else
+		struct ifreq ifopts;
+		struct ifreq if_ip;
+
+		// Modo Promíscuo
+		memcpy(ifopts.ifr_ifrn.ifrn_name, m_interfaceNames[in].c_str(), IFNAMSIZ-1);
+		ioctl(m_socket, SIOCGIFFLAGS, &ifopts);
+		ifopts.ifr_flags |= IFF_PROMISC;
+		ioctl(m_socket, SIOCSIFFLAGS, &ifopts);
+
+		if (setsockopt(m_socket, SOL_SOCKET, SO_BINDTODEVICE, m_interfaceNames[in].c_str(), IFNAMSIZ-1) == -1)	{
+			std::cout << __LINE__ <<  " - Erro: " << errcode << std::endl;
+			close(m_socket);
 			return;
 		}
 #endif
@@ -145,6 +174,19 @@ private:
 	std::function<void(Packet)> m_packetArrivalCallback{};
 
 	std::mutex m_lock{};
+
+//https://gist.github.com/austinmarton/2862515
+	inline void createSocket() {
+#ifdef _WIN32
+		m_socket = ::socket(AF_INET, SOCK_RAW, IPPROTO_IP);
+#else
+		m_socket = ::socket(AF_PACKET, SOCK_RAW, htons(0x0800));
+#endif
+		if (m_socket == INVALID_SOCK) {
+			std::cout << __LINE__ <<  " - Socket inválido: " << errcode << std::endl;
+			return;
+		}
+	}
 
 	inline void sniffLoop() {
 		std::vector<char> data;
