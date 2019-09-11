@@ -148,8 +148,11 @@ void gui() {
 				m_sniffer.stop();
 			}
 		}
+		ImGui::SameLine();
+		if (ImGui::Button("Limpar")) {
+			g_Pacotes.clear();
+		}
 		if (anySelected) {
-			ImGui::SameLine();
 			if (ImGui::Button("Concatenar e Salvar")) {
 				std::vector<char> dados;
 				dados.reserve(0xFFFF);
@@ -238,8 +241,5 @@ int main(int argc, char** argv) {
 	});
 
 	Application(640, 480, "Sniffer").run(gui);
-#ifdef _WIN32
-	WSACleanup();
-#endif
 	return 0;
 }

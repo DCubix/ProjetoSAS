@@ -4,6 +4,14 @@
 // IPV4 + UDP + TCP Headers: https://gist.github.com/Accalmie/d328287c05f0a417892f
 #include <stdint.h>
 
+#define ETHER_ADDR_LEN 6
+
+struct ETH_HDR {
+	u_char ether_dhost[ETHER_ADDR_LEN]; /* Destination host address */
+	u_char ether_shost[ETHER_ADDR_LEN]; /* Source host address */
+	u_short ether_type; /* IP? ARP? RARP? etc */
+};
+
 struct IPV4_HDR {
 	unsigned char ip_header_len:4; // 4-bit header length (in 32-bit words) normally=5 (Means 20 Bytes may be 24 also)
 	unsigned char ip_version :4; // 4-bit IPv4 version
