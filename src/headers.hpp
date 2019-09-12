@@ -4,7 +4,9 @@
 // IPV4 + UDP + TCP Headers: https://gist.github.com/Accalmie/d328287c05f0a417892f
 #include <stdint.h>
 
+#ifndef ETHER_ADDR_LEN
 #define ETHER_ADDR_LEN 6
+#endif
 
 struct ETH_HDR {
 	u_char ether_dhost[ETHER_ADDR_LEN]; /* Destination host address */

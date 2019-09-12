@@ -53,7 +53,11 @@ public:
 
 		for (pcap_if_t* dev = alldevs; dev != nullptr; dev = dev->next) {
 			m_interfaces.push_back(std::string(dev->name));
-			m_interfaceNames.push_back(std::string(dev->description));
+			if (dev->description == nullptr) {
+				m_interfaceNames.push_back(std::string(dev->name));
+			} else {
+				m_interfaceNames.push_back(std::string(dev->description));
+			}
 		}
 	}
 
