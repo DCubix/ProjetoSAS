@@ -17,9 +17,9 @@
 #include <iphlpapi.h>
 #include <windows.h>
 #else
-#include<sys/socket.h>
-#include<arpa/inet.h>
-#include<net/ethernet.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <net/ethernet.h>
 #endif
 
 #include "headers.hpp"
@@ -36,14 +36,6 @@ public:
 	inline virtual ~Sniffer() = default;
 
 	inline Sniffer() {
-// #ifdef _WIN32
-// 		WSADATA wsa;
-// 		if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
-// 			std::cerr << __LINE__ <<  " - WSAStartup() falhou: " << WSAGetLastError() << std::endl;
-// 			return;
-// 		}
-// #endif
-
 		pcap_if_t* alldevs;
 		char err[128];
 		if (pcap_findalldevs(&alldevs, err)) {
